@@ -19,6 +19,7 @@
     "dist"
   ],
   "dependencies": {
+    "@types/hapi__shot": "^6.0.0",
     "agent-twitter-client": "0.0.18",
     "discord.js": "14.16.3",
     "glob": "11.0.0"
