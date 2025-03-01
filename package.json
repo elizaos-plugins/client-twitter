@@ -21,7 +21,9 @@
   "dependencies": {
     "agent-twitter-client": "0.0.18",
     "discord.js": "14.16.3",
-    "glob": "11.0.0"
+    "glob": "11.0.0",
+    "zod": "^3.24.2",
+    "@elizaos/core": "0.1.9"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "1.1.3",
