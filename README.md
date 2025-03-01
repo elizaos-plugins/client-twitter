@@ -157,3 +157,39 @@ For issues or questions:
    - Error messages
    - Configuration details
    - Steps to reproduce
+
+## LLM Output Format
+
+### Text-Only Posts
+When generating text-only posts, the LLM should return plain text or a simple JSON object with a `text` field:
+
+```json
+{
+  "text": "This is a sample tweet that will be posted."
+}
+```
+
+### Media Posts
+For posts with media attachments, the LLM must return a JSON object with both `text` and `attachments` fields:
+
+```json
+{
+  "text": "Check out this amazing image!",
+  "attachments": [
+    {
+      "url": "https://example.com/image.jpg",
+      "contentType": "image/jpeg"  // Optional, will be auto-detected if not provided
+    },
+    {
+      "url": "https://example.com/video.mp4",
+      "contentType": "video/mp4"   // Optional, will be auto-detected if not provided
+    }
+  ]
+}
+```
+
+The `attachments` array can contain up to 4 media items for images or a single video. Each attachment must include:
+- `url`: A valid, publicly accessible URL to the media file
+- `contentType`: (Optional) MIME type of the media. If not provided, it will be detected automatically
+
+The system will download these media files and attach them to the tweet. Invalid URLs or inaccessible media will be skipped.
