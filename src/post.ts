@@ -89,6 +89,7 @@ interface PendingTweet {
     discordMessageId: string;
     channelId: string;
     timestamp: number;
+    mediaData?: MediaData[];
 }
 
 type PendingTweetApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
@@ -559,11 +560,40 @@ export class TwitterPostClient {
                 tweetTextForPosting = rawTweetContent.trim();
             }
 
+            // Process media attachments if present
             if (
                 parsedResponse?.attachments &&
                 parsedResponse?.attachments.length > 0
             ) {
-                mediaData = await fetchMediaData(parsedResponse.attachments);
+                try {
+                    elizaLogger.log(`Processing ${parsedResponse.attachments.length} media attachments`);
+                    
+                    // Validate attachments format
+                    const validAttachments = parsedResponse.attachments.filter(attachment => {
+                        if (!attachment.url) {
+                            elizaLogger.error(`Invalid attachment: missing URL`, attachment);
+                            return false;
+                        }
+                        return true;
+                    });
+                    
+                    if (validAttachments.length > 0) {
+                        // Set default content type if not provided
+                        validAttachments.forEach(attachment => {
+                            if (!attachment.contentType) {
+                                // The getMimeTypeFromUrl function in utils.ts will handle this
+                                elizaLogger.log(`No content type provided for ${attachment.url}, will be detected automatically`);
+                            }
+                        });
+                        
+                        mediaData = await fetchMediaData(validAttachments);
+                        elizaLogger.log(`Successfully processed ${mediaData.length} media attachments`);
+                    }
+                } catch (error) {
+                    elizaLogger.error(`Error processing media attachments:`, error);
+                    // Continue without media if there's an error
+                    mediaData = null;
+                }
             }
 
             // Try extracting text attribute
@@ -606,6 +636,9 @@ export class TwitterPostClient {
                 elizaLogger.info(
                     `Dry run: would have posted tweet: ${tweetTextForPosting}`
                 );
+                if (mediaData) {
+                    elizaLogger.info(`Dry run: would have attached ${mediaData.length} media files`);
+                }
                 return;
             }
 
@@ -615,16 +648,23 @@ export class TwitterPostClient {
                     elizaLogger.log(
                         `Sending Tweet For Approval:\n ${tweetTextForPosting}`
                     );
+                    if (mediaData) {
+                        elizaLogger.log(`Tweet includes ${mediaData.length} media attachments`);
+                    }
                     await this.sendForApproval(
                         tweetTextForPosting,
                         roomId,
-                        rawTweetContent
+                        rawTweetContent,
+                        mediaData
                     );
                     elizaLogger.log("Tweet sent for approval");
                 } else {
                     elizaLogger.log(
                         `Posting new tweet:\n ${tweetTextForPosting}`
                     );
+                    if (mediaData) {
+                        elizaLogger.log(`Tweet includes ${mediaData.length} media attachments`);
+                    }
                     this.postTweet(
                         this.runtime,
                         this.client,
@@ -1263,7 +1303,8 @@ export class TwitterPostClient {
     private async sendForApproval(
         tweetTextForPosting: string,
         roomId: UUID,
-        rawTweetContent: string
+        rawTweetContent: string,
+        mediaData?: MediaData[]
     ): Promise<string | null> {
         try {
             const embed = {
@@ -1280,6 +1321,11 @@ export class TwitterPostClient {
                         value: tweetTextForPosting.length.toString(),
                         inline: true,
                     },
+                    ...(mediaData && mediaData.length > 0 ? [{
+                        name: "Media Attachments",
+                        value: `${mediaData.length} file(s) attached`,
+                        inline: true,
+                    }] : []),
                 ],
                 footer: {
                     text: "Reply with '👍' to post or '❌' to discard, This will automatically expire and remove after 24 hours if no response received",
@@ -1311,6 +1357,7 @@ export class TwitterPostClient {
                 discordMessageId: message.id,
                 channelId: this.discordApprovalChannelId,
                 timestamp: Date.now(),
+                mediaData,
             });
 
             // Store updated array
@@ -1453,13 +1500,20 @@ export class TwitterPostClient {
 
             if (approvalStatus === "APPROVED") {
                 elizaLogger.log("Tweet Approved, Posting");
+                
+                // Log if media is included
+                if (pendingTweet.mediaData && pendingTweet.mediaData.length > 0) {
+                    elizaLogger.log(`Tweet includes ${pendingTweet.mediaData.length} media attachments`);
+                }
+                
                 await this.postTweet(
                     this.runtime,
                     this.client,
                     pendingTweet.tweetTextForPosting,
                     pendingTweet.roomId,
                     pendingTweet.rawTweetContent,
-                    this.twitterUsername
+                    this.twitterUsername,
+                    pendingTweet.mediaData
                 );
 
                 // Notify on Discord about posting
