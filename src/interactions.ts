@@ -18,7 +18,7 @@ import {
     ServiceType
 } from "@elizaos/core";
 import type { ClientBase } from "./base";
-import { buildConversationThread, sendTweet, wait } from "./utils.ts";
+import { buildConversationThread, isConversationDone,analyzeConversation, sendTweet, wait } from "./utils.ts";
 
 export const twitterMessageHandlerTemplate =
     `
@@ -29,6 +29,8 @@ export const twitterMessageHandlerTemplate =
 {{bio}}
 {{lore}}
 {{topics}}
+
+
 
 {{providers}}
 
@@ -51,7 +53,7 @@ Here is the descriptions of images in the Current post.
 Thread of Tweets You Are Replying To:
 {{formattedConversation}}
 
-# INSTRUCTIONS: Generate a post in the voice, style and perspective of {{agentName}} (@{{twitterUserName}}). You MUST include an action if the current post text includes a prompt that is similar to one of the available actions mentioned here:
+# INSTRUCTIONS: Generate a post in the voice, style and perspective of {{agentName}} (@{{twitterUserName}}).{{userRapportDescription}}. You MUST include an action if the current post text includes a prompt that is similar to one of the available actions mentioned here:
 {{actionNames}}
 {{actions}}
 
@@ -104,15 +106,50 @@ export class TwitterInteractionClient {
     }
 
     async start() {
-        const handleTwitterInteractionsLoop = () => {
-            this.handleTwitterInteractions();
+        const handleTwitterInteractionsLoop = async () => {
+            await this.handleTwitterInteractions();
+            console.log("handleTwitterInteractionsLoop");
+            
+            // Run checkActiveConversations right after
+            await this.checkActiveConversations();
+
+            // Schedule next iteration of both checks
             setTimeout(
                 handleTwitterInteractionsLoop,
                 // Defaults to 2 minutes
                 this.client.twitterConfig.TWITTER_POLL_INTERVAL * 1000
             );
         };
+
+        // Start the combined loop
         handleTwitterInteractionsLoop();
+    }
+
+    async checkActiveConversations() {
+        try {
+            // Get all active conversations
+            const activeConversations = await this.runtime.databaseAdapter.getConversationsByStatus('ACTIVE');
+
+            for (const conversation of activeConversations) {
+                const messageIds = JSON.parse(conversation.messageIds);
+          
+                if(isConversationDone(conversation.id, this.runtime)){
+                    if(messageIds.length>=3){
+                        await analyzeConversation(conversation.id, this.runtime);
+                        //temporary
+                        elizaLogger.debug("analyzing conversation", conversation.id);
+                    }
+                    else{
+                        await this.runtime.databaseAdapter.updateConversation({
+                            id: conversation.id,
+                            status: 'CLOSED'
+                        });
+                    }
+                }
+            }
+        } catch (error) {
+            elizaLogger.error("Error checking conversations:", error);
+        }
     }
 
     async handleTwitterInteractions() {
@@ -129,7 +166,7 @@ export class TwitterInteractionClient {
                 )
             ).tweets;
 
-            elizaLogger.log(
+            elizaLogger.debug(
                 "Completed checking mentioned tweets:",
                 mentionCandidates.length
             );
@@ -270,7 +307,6 @@ export class TwitterInteractionClient {
                         tweet.name,
                         "twitter"
                     );
-
                     const thread = await buildConversationThread(
                         tweet,
                         this.client
@@ -373,7 +409,8 @@ export class TwitterInteractionClient {
             formattedConversation,
             imageDescriptions: imageDescriptionsArray.length > 0
             ? `\nImages in Tweet:\n${imageDescriptionsArray.map((desc, i) =>
-              `Image ${i + 1}: Title: ${desc.title}\nDescription: ${desc.description}`).join("\n\n")}`:""
+              `Image ${i + 1}: Title: ${desc.title}\nDescription: ${desc.description}`).join("\n\n")}`:"",
+            userRapport: await this.runtime.databaseAdapter.getUserRapport(tweet.username, this.runtime.agentId) || 0
         });
 
         // check if the tweet exists, save if it doesn't
@@ -566,21 +603,23 @@ export class TwitterInteractionClient {
     ): Promise<Tweet[]> {
         const thread: Tweet[] = [];
         const visited: Set<string> = new Set();
+        const conversationId = stringToUuid(tweet.conversationId + "-" + this.runtime.agentId);
+        const existingConversation = await this.runtime.databaseAdapter.getConversation(conversationId);
 
-        async function processThread(currentTweet: Tweet, depth = 0) {
-            elizaLogger.log("Processing tweet:", {
+        async function processThread(currentTweet: Tweet, depth: number = 0) {
+            elizaLogger.debug("Processing tweet:", {
                 id: currentTweet.id,
                 inReplyToStatusId: currentTweet.inReplyToStatusId,
                 depth: depth,
             });
 
             if (!currentTweet) {
-                elizaLogger.log("No current tweet found for thread building");
+                elizaLogger.debug("No current tweet found for thread building");
                 return;
             }
 
             if (depth >= maxReplies) {
-                elizaLogger.log("Reached maximum reply depth", depth);
+                elizaLogger.debug("Reached maximum reply depth", depth);
                 return;
             }
 
@@ -676,6 +715,73 @@ export class TwitterInteractionClient {
 
         // Need to bind this context for the inner function
         await processThread.bind(this)(tweet, 0);
+   // After thread is built, store conversation
+   const messageIds = thread.map(t =>
+    stringToUuid(t.id + "-" + this.runtime.agentId)
+);
+
+const participantIds = [...new Set(thread.map(t =>
+    t.userId === this.runtime.userId
+        ? this.runtime.agentId
+        : stringToUuid(t.userId)
+))];
+
+// Format conversation for analysis
+const formattedConversation = thread.map(tweet => `@${tweet.username}: ${tweet.text}`)
+.join("\n");
+elizaLogger.debug("Conversation thread built:", {
+    messageCount: thread.length,
+    participants: thread.map(t => t.username).filter((v, i, a) => a.indexOf(v) === i),
+    messageIds: messageIds,
+    conversationId: conversationId
+});
+
+
+    if (existingConversation) {
+        // Parse existing JSON arrays
+        elizaLogger.debug("Updating existing conversation", {
+            id: conversationId,
+            newMessageCount: messageIds.length
+        });
+        const existingMessageIds = JSON.parse(existingConversation.messageIds);
+        const existingParticipantIds = JSON.parse(existingConversation.participantIds);
+
+        await this.runtime.databaseAdapter.updateConversation({
+            id: conversationId,
+            messageIds: JSON.stringify([...new Set([...existingMessageIds, ...messageIds])]),
+            participantIds: JSON.stringify([...new Set([...existingParticipantIds, ...participantIds])]),
+            lastMessageAt: new Date(Math.max(
+                ...thread.map(t => t.timestamp * 1000),
+                existingConversation.lastMessageAt.getTime()
+            )),
+            context: formattedConversation
+        });
+    } else {
+        elizaLogger.debug("Creating new conversation", {
+            id: conversationId,
+            messageCount: messageIds.length,
+            participantCount: participantIds.length
+        });
+        await this.runtime.databaseAdapter.storeConversation({
+            id: conversationId,
+            rootTweetId: thread[0].id,
+            messageIds: JSON.stringify(messageIds),
+            participantIds: JSON.stringify(participantIds),
+            startedAt: new Date(thread[0].timestamp * 1000),
+            lastMessageAt: new Date(thread[thread.length - 1].timestamp * 1000),
+            context: formattedConversation,
+            agentId: this.runtime.agentId
+        });
+    }
+
+    elizaLogger.debug("Final thread details:", {
+        totalTweets: thread.length,
+        tweetDetails: thread.map(t => ({
+            id: t.id,
+            author: t.username,
+            text: t.text?.slice(0, 50) + "..."
+        }))
+    });
 
         return thread;
     }
