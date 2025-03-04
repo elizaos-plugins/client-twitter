@@ -38,6 +38,8 @@ TWITTER_SEARCH_ENABLE=false # Enable search functionality
 TWITTER_RETRY_LIMIT=5      # Login retry attempts
 TWITTER_POLL_INTERVAL=120  # Poll interval in seconds
 TWITTER_TARGET_USERS=      # Comma-separated list of target users
+TWITTER_REFLECT_MODE=false # Enable reflection mode for smarter posting
+TWITTER_USE_DEFAULT_REFLECTIONS=false # Use default reflection evaluator and provider
 
 # Post Generation Settings
 ENABLE_TWITTER_POST_GENERATION=true
@@ -83,6 +85,20 @@ The client can automatically generate and post tweets based on your agent's char
 - Regular tweets (≤280 characters)
 - Long-form tweets (Note Tweets)
 - Media tweets (with images/videos)
+
+### Reflection Mode
+
+A new feature that enables smarter, context-aware posting:
+- Automatically extracts valuable information from conversations
+- Evaluates whether posting is appropriate at the current moment
+- Considers timing, relevance, and previous posts
+- Posts only when meaningful new information is available
+- Evaluates posting opportunities every minute (**but only posts when appropriate**)
+
+The reflection mode includes:
+- **Reflect Evaluator**: Analyzes conversations to identify Twitter-worthy information
+- **Reflections Provider**: Manages and provides extracted information for post generation
+- **Smart Posting Logic**: Makes intelligent decisions about when and what to post
 
 ### Interactions
 
