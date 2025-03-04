@@ -27,8 +27,9 @@ const twitterUsernameSchema = z
  * including new fields like TWITTER_SPACES_ENABLE.
  */
 export const twitterEnvSchema = z.object({
-    TWITTER_DRY_RUN: z.boolean(),
-    TWITTER_USERNAME: z.string().min(1, "X/Twitter username is required"),
+    TWITTER_DRY_RUN: z.boolean().default(false),
+    TWITTER_REFLECT_MODE: z.boolean().default(false),
+    TWITTER_USERNAME: z.string().optional(),
     TWITTER_PASSWORD: z.string().min(1, "X/Twitter password is required"),
     TWITTER_EMAIL: z.string().email("Valid X/Twitter email is required"),
     MAX_TWEET_LENGTH: z.number().int().default(DEFAULT_MAX_TWEET_LENGTH),
@@ -76,6 +77,7 @@ export const twitterEnvSchema = z.object({
     ACTION_TIMELINE_TYPE: z
         .nativeEnum(ActionTimelineType)
         .default(ActionTimelineType.ForYou),
+    TWITTER_USE_DEFAULT_REFLECTIONS: z.boolean().default(false),
 });
 
 export type TwitterConfig = z.infer<typeof twitterEnvSchema>;
@@ -122,6 +124,12 @@ export async function validateTwitterConfig(
                     runtime.getSetting("TWITTER_DRY_RUN") ||
                         process.env.TWITTER_DRY_RUN
                 ) ?? false, // parseBooleanFromText return null if "", map "" to false
+
+            TWITTER_REFLECT_MODE:
+                parseBooleanFromText(
+                    runtime.getSetting("TWITTER_REFLECT_MODE") ||
+                        process.env.TWITTER_REFLECT_MODE
+                ) ?? false,
 
             TWITTER_USERNAME:
                 runtime.getSetting("TWITTER_USERNAME") ||
@@ -232,6 +240,12 @@ export async function validateTwitterConfig(
             ACTION_TIMELINE_TYPE:
                 runtime.getSetting("ACTION_TIMELINE_TYPE") ||
                 process.env.ACTION_TIMELINE_TYPE,
+
+            TWITTER_USE_DEFAULT_REFLECTIONS:
+                parseBooleanFromText(
+                    runtime.getSetting("TWITTER_USE_DEFAULT_REFLECTIONS") ||
+                        process.env.TWITTER_USE_DEFAULT_REFLECTIONS
+                ) ?? false,
         };
 
         return twitterEnvSchema.parse(twitterConfig);

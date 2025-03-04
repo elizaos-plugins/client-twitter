@@ -54,6 +54,41 @@ Write a post that is {{adjective}} about {{topic}} (without mentioning {{topic}}
 Your response should be 1, 2, or 3 sentences (choose the length at random).
 Your response should not contain any questions. Brief, concise statements only. The total character count MUST be less than {{maxTweetLength}}. No emojis. Use \\n\\n (double spaces) between statements if there are multiple statements in your response.`;
 
+const twitterReflectModePostTemplate = `
+# About {{agentName}} (@{{twitterUserName}}):
+{{bio}}
+{{lore}}
+{{topics}}
+
+{{characterPostExamples}}
+
+{{postDirections}}
+
+{{recentPosts}}
+
+# Task: Use the information bellow (between "---START OF INFORMATION---" and "---END OF INFORMATION---") to decide whether {{agentName}} (@{{twitterUserName}}) should post a tweet right now.
+Consider the following:
+1. Is there something meaningful to say right now?
+2. Would it be natural for {{agentName}} to share thoughts about this at the moment?
+3. Is this a good time to engage with the audience?
+4. Not repeat posts on the same topic.
+5. Don't post too often - keep in mind the time between posts.
+6. Not post tweets based on the current time.
+7. Should post only when some new information is available and the post should be relevant to the new information. Do not post random thoughts.
+
+This is the information available:
+---START OF INFORMATION---
+{{providers}}
+---END OF INFORMATION---
+
+If you decide to post, write a tweet that is {{adjective}}, based on the information above, from the perspective of {{agentName}}.
+Your response should be 1, 2, or 3 sentences (choose the length at random).
+Your response should not contain any questions. Brief, concise statements only. The total character count MUST be less than {{maxTweetLength}}. No emojis. Use \\n\\n (double new lines) between statements if there are multiple statements in your response.
+
+If you decide not to post, respond with exactly: NONE
+
+Your response should either be a tweet or NONE, with no additional explanation or commentary.`;
+
 export const twitterActionTemplate =
     `
 # INSTRUCTIONS: Determine actions for {{agentName}} (@{{twitterUserName}}) based on:
@@ -243,12 +278,21 @@ export class TwitterPostClient {
             }>("twitter/" + this.twitterUsername + "/lastPost");
 
             const lastPostTimestamp = lastPost?.timestamp ?? 0;
-            const minMinutes = this.client.twitterConfig.POST_INTERVAL_MIN;
-            const maxMinutes = this.client.twitterConfig.POST_INTERVAL_MAX;
-            const randomMinutes =
-                Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) +
-                minMinutes;
-            const delay = randomMinutes * 60 * 1000;
+            const isReflectMode = this.client.twitterConfig.TWITTER_REFLECT_MODE;
+            const reflectModeDelay = 1;
+            let delayMinutes;
+
+            if (isReflectMode) {
+                delayMinutes = reflectModeDelay;
+            } else {
+                const minMinutes = this.client.twitterConfig.POST_INTERVAL_MIN;
+                const maxMinutes = this.client.twitterConfig.POST_INTERVAL_MAX;
+                delayMinutes =
+                    Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) +
+                    minMinutes;
+            }
+
+            const delay = delayMinutes * 60 * 1000;
 
             if (Date.now() > lastPostTimestamp + delay) {
                 await this.generateNewTweet();
@@ -258,7 +302,11 @@ export class TwitterPostClient {
                 generateNewTweetLoop(); // Set up next iteration
             }, delay);
 
-            elizaLogger.log(`Next tweet scheduled in ${randomMinutes} minutes`);
+            if (isReflectMode) {
+                elizaLogger.log(`Next reflection mode tweet scheduled in ${reflectModeDelay} minutes`);
+            } else {
+                elizaLogger.log(`Next tweet scheduled in ${delayMinutes} minutes`);
+            }
         };
 
         const processActionsLoop = async () => {
@@ -530,11 +578,14 @@ export class TwitterPostClient {
                 }
             );
 
+            const isReflectMode = this.client.twitterConfig.TWITTER_REFLECT_MODE;
+            const template = isReflectMode ? 
+                (this.runtime.character.templates?.twitterPostTemplate || twitterReflectModePostTemplate) :
+                (this.runtime.character.templates?.twitterPostTemplate || twitterPostTemplate);
+
             const context = composeContext({
                 state,
-                template:
-                    this.runtime.character.templates?.twitterPostTemplate ||
-                    twitterPostTemplate,
+                template,
             });
 
             elizaLogger.debug("generate post prompt:\n" + context);
@@ -542,10 +593,16 @@ export class TwitterPostClient {
             const response = await generateText({
                 runtime: this.runtime,
                 context,
-                modelClass: ModelClass.SMALL,
+                modelClass: ModelClass.LARGE,
             });
 
             const rawTweetContent = cleanJsonResponse(response);
+
+            // Check for NONE response in reflect mode
+            if (isReflectMode && rawTweetContent.trim() === "NONE") {
+                elizaLogger.log("Reflection mode decided not to post at this time");
+                return;
+            }
 
             // First attempt to clean content
             let tweetTextForPosting = null;
