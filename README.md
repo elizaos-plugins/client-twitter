@@ -38,6 +38,8 @@ TWITTER_SEARCH_ENABLE=false # Enable search functionality
 TWITTER_RETRY_LIMIT=5      # Login retry attempts
 TWITTER_POLL_INTERVAL=120  # Poll interval in seconds
 TWITTER_TARGET_USERS=      # Comma-separated list of target users
+TWITTER_REFLECT_MODE=false # Enable reflection mode for smarter posting
+TWITTER_USE_DEFAULT_REFLECTIONS=false # Use default reflection evaluator and provider
 
 # Post Generation Settings
 ENABLE_TWITTER_POST_GENERATION=true
@@ -83,6 +85,20 @@ The client can automatically generate and post tweets based on your agent's char
 - Regular tweets (≤280 characters)
 - Long-form tweets (Note Tweets)
 - Media tweets (with images/videos)
+
+### Reflection Mode
+
+A new feature that enables smarter, context-aware posting:
+- Automatically extracts valuable information from conversations
+- Evaluates whether posting is appropriate at the current moment
+- Considers timing, relevance, and previous posts
+- Posts only when meaningful new information is available
+- Evaluates posting opportunities every minute (**but only posts when appropriate**)
+
+The reflection mode includes:
+- **Reflect Evaluator**: Analyzes conversations to identify Twitter-worthy information
+- **Reflections Provider**: Manages and provides extracted information for post generation
+- **Smart Posting Logic**: Makes intelligent decisions about when and what to post
 
 ### Interactions
 
@@ -157,3 +173,39 @@ For issues or questions:
    - Error messages
    - Configuration details
    - Steps to reproduce
+
+## LLM Output Format
+
+### Text-Only Posts
+When generating text-only posts, the LLM should return plain text or a simple JSON object with a `text` field:
+
+```json
+{
+  "text": "This is a sample tweet that will be posted."
+}
+```
+
+### Media Posts
+For posts with media attachments, the LLM must return a JSON object with both `text` and `attachments` fields:
+
+```json
+{
+  "text": "Check out this amazing image!",
+  "attachments": [
+    {
+      "url": "https://example.com/image.jpg",
+      "contentType": "image/jpeg"  // Optional, will be auto-detected if not provided
+    },
+    {
+      "url": "https://example.com/video.mp4",
+      "contentType": "video/mp4"   // Optional, will be auto-detected if not provided
+    }
+  ]
+}
+```
+
+The `attachments` array can contain up to 4 media items for images or a single video. Each attachment must include:
+- `url`: A valid, publicly accessible URL to the media file
+- `contentType`: (Optional) MIME type of the media. If not provided, it will be detected automatically
+
+The system will download these media files and attach them to the tweet. Invalid URLs or inaccessible media will be skipped.
