@@ -133,7 +133,7 @@ export class TwitterInteractionClient {
             for (const conversation of activeConversations) {
                 const messageIds = JSON.parse(conversation.messageIds);
           
-                if(isConversationDone(conversation.id, this.runtime)){
+                if(await isConversationDone(conversation.id, this.runtime)){
                     if(messageIds.length>=3){
                         await analyzeConversation(conversation.id, this.runtime);
                         //temporary

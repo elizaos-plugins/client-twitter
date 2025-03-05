@@ -621,25 +621,3 @@ export async function isConversationDone(
     return false;
 }
 
-export async function closeConversation(
-    conversationId: UUID,
-    runtime: IAgentRuntime
-): Promise<void> {
-    await runtime.databaseAdapter.updateConversation({
-        id: conversationId,
-        status: 'CLOSED',
-        closedAt: new Date()
-    });
-
-    await analyzeConversation(conversationId, runtime);
-}
-
-export async function checkAndCloseConversation(
-    conversationId: UUID,
-    runtime: IAgentRuntime
-): Promise<void> {
-    if (await isConversationDone(conversationId, runtime)) {
-        elizaLogger.log("Closing conversation:", conversationId);
-        await closeConversation(conversationId, runtime);
-    }
-}
