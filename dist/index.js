@@ -1869,7 +1869,7 @@ var TwitterPostClient = class {
         }
       }
     };
-    if (this.client.twitterConfig.POST_IMMEDIATELY) {
+    if (this.client.twitterConfig.POST_IMMEDIATELY && this.client.twitterConfig.TWITTER_REFLECT_MODE == false) {
       await this.generateNewTweet();
     }
     if (this.client.twitterConfig.ENABLE_TWITTER_POST_GENERATION) {
