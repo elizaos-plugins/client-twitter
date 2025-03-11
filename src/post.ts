@@ -337,7 +337,7 @@ export class TwitterPostClient {
             }
         };
 
-        if (this.client.twitterConfig.POST_IMMEDIATELY) {
+        if (this.client.twitterConfig.POST_IMMEDIATELY && this.client.twitterConfig.TWITTER_REFLECT_MODE == false) {
             await this.generateNewTweet();
         }
 
