@@ -169,31 +169,93 @@ export async function buildConversationThread(
 export async function fetchMediaData(
     attachments: Media[]
 ): Promise<MediaData[]> {
+    elizaLogger.log(`Processing ${attachments.length} media attachments`);
+    
     return Promise.all(
-        attachments.map(async (attachment: Media) => {
-            if (/^(http|https):\/\//.test(attachment.url)) {
-                // Handle HTTP URLs
-                const response = await fetch(attachment.url);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch file: ${attachment.url}`);
-                }
-                const mediaBuffer = Buffer.from(await response.arrayBuffer());
-                const mediaType = attachment.contentType;
-                return { data: mediaBuffer, mediaType };
-            } else if (fs.existsSync(attachment.url)) {
+        attachments.map(async (attachment: Media, index) => {
+            elizaLogger.log(`Processing attachment ${index + 1}: ${attachment.url}`);
+            
+            try {
+                // Handle HTTP/HTTPS URLs
+                if (/^(http|https):\/\//.test(attachment.url)) {
+                    elizaLogger.log(`Fetching remote file: ${attachment.url}`);
+                    const response = await fetch(attachment.url);
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch file: ${attachment.url} (Status: ${response.status})`);
+                    }
+                    const mediaBuffer = Buffer.from(await response.arrayBuffer());
+                    const mediaType = attachment.contentType || response.headers.get('content-type') || getMimeTypeFromUrl(attachment.url);
+                    elizaLogger.log(`Successfully fetched remote file (${mediaBuffer.length} bytes, type: ${mediaType})`);
+                    return { data: mediaBuffer, mediaType };
+                } 
                 // Handle local file paths
-                const mediaBuffer = await fs.promises.readFile(
-                    path.resolve(attachment.url)
-                );
-                const mediaType = attachment.contentType;
-                return { data: mediaBuffer, mediaType };
-            } else {
-                throw new Error(
-                    `File not found: ${attachment.url}. Make sure the path is correct.`
-                );
+                else {
+                    // Try different path variations to handle both absolute and relative paths
+                    const possiblePaths = [
+                        attachment.url,                      // As provided
+                        path.resolve(attachment.url),        // Absolute path
+                        path.resolve(process.cwd(), attachment.url) // Relative to current working directory
+                    ];
+                    
+                    // Find the first path that exists
+                    let filePath = null;
+                    for (const p of possiblePaths) {
+                        if (fs.existsSync(p)) {
+                            filePath = p;
+                            break;
+                        }
+                    }
+                    
+                    if (!filePath) {
+                        throw new Error(
+                            `File not found: ${attachment.url}. Tried paths: ${possiblePaths.join(', ')}`
+                        );
+                    }
+                    
+                    elizaLogger.log(`Reading local file: ${filePath}`);
+                    const mediaBuffer = await fs.promises.readFile(filePath);
+                    
+                    // Use provided content type or try to determine from file extension
+                    const mediaType = attachment.contentType || getMimeTypeFromUrl(filePath);
+                    
+                    elizaLogger.log(`Successfully read local file (${mediaBuffer.length} bytes, type: ${mediaType})`);
+                    return { data: mediaBuffer, mediaType };
+                }
+            } catch (error) {
+                elizaLogger.error(`Error processing attachment ${index + 1}:`, error);
+                throw error;
             }
         })
     );
+}
+
+/**
+ * Attempts to determine MIME type from file extension
+ */
+function getMimeTypeFromUrl(url: string): string {
+    const extension = path.extname(url).toLowerCase();
+    
+    // Common image types
+    const mimeTypes: Record<string, string> = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.bmp': 'image/bmp',
+        
+        // Video types
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.webm': 'video/webm',
+        
+        // Default
+        '': 'application/octet-stream'
+    };
+    
+    return mimeTypes[extension] || 'application/octet-stream';
 }
 
 export async function sendTweet(
