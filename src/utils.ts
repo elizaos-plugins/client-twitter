@@ -531,13 +531,9 @@ export async function analyzeConversation(
     conversationId: UUID,
     runtime: IAgentRuntime
 ): Promise<void> {
-    
+
     const conversation = await runtime.databaseAdapter.getConversation(conversationId);
-    console.debug("analyze conversation", conversation)
-    if (!conversation) {
-        elizaLogger.error("No conversation found for analysis", conversationId);
-        return;
-    }
+
 
     // Get all messages in order
     const messages = await runtime.databaseAdapter.getConversationMessages(conversationId);
@@ -556,15 +552,15 @@ export async function analyzeConversation(
     //console.log("state:", state)
 
     // Format conversation for per-user analysis
-    const analysisTemplate = ` 
+    const analysisTemplate = `
     #Conversation:
     {{recentUserConversations}}
 
     #Instructions:
-    Evaluate the messages the other users sent to you in this conversation. 
-    Rate each users messages sent to you as a whole using these metrics: [-5] very bad, [0] neutral, [5] very good. 
-    Evaluates these messages as the character {{agentName}} (@{{twitterUserName}}):with the context of the whole conversation. 
-    If you aren't sure if the message was directed to you, or you're missing context to give a good answer, give the score [0] neutral. 
+    Evaluate the messages the other users sent to you in this conversation.
+    Rate each users messages sent to you as a whole using these metrics: [-5] very bad, [0] neutral, [5] very good.
+    Evaluates these messages as the character {{agentName}} (@{{twitterUserName}}):with the context of the whole conversation.
+    If you aren't sure if the message was directed to you, or you're missing context to give a good answer, give the score [0] neutral.
 
     Return ONLY a JSON object with usernames as keys and scores as values. Example format:
     {
@@ -576,23 +572,30 @@ export async function analyzeConversation(
         template: analysisTemplate
     });
 
+
     const analysis = await generateText({
         runtime,
         context,
-        modelClass: ModelClass.LARGE,
+        modelClass: ModelClass.MEDIUM,
     });
 
-    elizaLogger.log("User sentiment scores:", analysis);
+    // Strip markdown code blocks if present
+    const cleanAnalysis = analysis.replace(/^```(?:json)?\n|\n```$/g, '').trim();
+
+    elizaLogger.debug("Cleaned analysis:", cleanAnalysis);
 
     try {
-        const sentimentScores = JSON.parse(analysis);
+        const sentimentScores = JSON.parse(cleanAnalysis);
+
         // Update conversation with analysis
         await runtime.databaseAdapter.updateConversation({
             id: conversationId,
             status: 'CLOSED'
         });
-        // Update user rapport based on sentiment scores
+
+        // Log each update attempt
         for (const [username, score] of Object.entries(sentimentScores)) {
+            elizaLogger.debug(`Updating rapport for ${username} with score ${score}`);
             await runtime.databaseAdapter.setUserRapport(
                 username,
                 runtime.agentId,
@@ -600,24 +603,12 @@ export async function analyzeConversation(
             );
         }
     } catch (error) {
-        elizaLogger.error("Error parsing sentiment analysis:", error);
+        elizaLogger.error("Error parsing sentiment analysis:", {
+            error: error.message,
+            stack: error.stack,
+            rawAnalysis: analysis,
+            cleanedAnalysis: cleanAnalysis
+        });
     }
-}
-
-export async function isConversationDone(
-    conversationId: UUID,
-    runtime: IAgentRuntime
-): Promise<boolean> {
-    const conversation = await runtime.databaseAdapter.getConversation(conversationId);
-    const lastMessageTime = new Date(conversation.lastMessageAt);
-    const now = new Date();
-
-    const timeInactive = now.getTime() - lastMessageTime.getTime();
-    if (timeInactive > 45 * 60 * 1000) {
-       
-        return true;
-    }
-
-    return false;
 }
 
