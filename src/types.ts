@@ -1,4 +1,4 @@
 export type MediaData = {
-    data: Buffer;
-    mediaType: string;
+  data: Buffer;
+  mediaType: string;
 };

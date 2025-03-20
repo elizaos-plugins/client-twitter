@@ -1,7 +1,7 @@
-import { messageCompletionFooter, shouldRespondFooter } from "@elizaos/core";
+import { messageCompletionFooter, shouldRespondFooter } from '@elizaos/core';
 
 export const twitterShouldRespondTemplate =
-    `# Task: Decide if {{agentName}} should respond.
+  `# Task: Decide if {{agentName}} should respond.
 About {{agentName}}:
 {{bio}}
 
@@ -70,7 +70,7 @@ If {{agentName}} is conversing with a user and they have not asked to stop, it i
 ` + shouldRespondFooter;
 
 export const twitterVoiceHandlerTemplate =
-    `# Task: Generate conversational voice dialog for {{agentName}}.
+  `# Task: Generate conversational voice dialog for {{agentName}}.
     About {{agentName}}:
     {{bio}}
 
