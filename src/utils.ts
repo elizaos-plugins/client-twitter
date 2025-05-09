@@ -1,6 +1,6 @@
 import type { Tweet } from "agent-twitter-client";
-import { getEmbeddingZeroVector } from "@elizaos/core";
-import type { Content, Memory, UUID } from "@elizaos/core";
+import { getEmbeddingZeroVector, composeContext,  generateText, ModelClass } from "@elizaos/core";
+import type { Content, Memory, UUID, IAgentRuntime } from "@elizaos/core";
 import { stringToUuid } from "@elizaos/core";
 import type { ClientBase } from "./base";
 import { elizaLogger } from "@elizaos/core";
@@ -37,6 +37,8 @@ export async function buildConversationThread(
 ): Promise<Tweet[]> {
     const thread: Tweet[] = [];
     const visited: Set<string> = new Set();
+    const conversationId = stringToUuid(tweet.conversationId + "-" + client.runtime.agentId);
+    const existingConversation = await client.runtime.databaseAdapter.getConversation(conversationId);
 
     async function processThread(currentTweet: Tweet, depth = 0) {
         elizaLogger.debug("Processing tweet:", {
@@ -154,14 +156,78 @@ export async function buildConversationThread(
     }
 
     await processThread(tweet, 0);
+    // After thread is built, store conversation
+    const messageIds = thread.map(t =>
+        stringToUuid(t.id + "-" + client.runtime.agentId)
+    );
 
-    elizaLogger.debug("Final thread built:", {
+    const participantIds = [...new Set(thread.map(t =>
+        t.userId === client.profile.id
+            ? client.runtime.agentId
+            : stringToUuid(t.userId)
+    ))];
+
+    // Format conversation for analysis
+    const formattedConversation = thread.map(tweet => `@${tweet.username}: ${tweet.text}`)
+        .join("\n");
+
+    elizaLogger.debug("Conversation thread built:", {
+        messageCount: thread.length,
+        participants: thread.map(t => t.username).filter((v, i, a) => a.indexOf(v) === i),
+        messageIds: messageIds,
+        conversationId: conversationId
+    });
+    if (existingConversation) {
+        // Parse existing JSON arrays
+        elizaLogger.debug("Updating existing conversation", {
+            id: conversationId,
+            newMessageCount: messageIds.length,
+            
+        });
+        const existingMessageIds = JSON.parse(existingConversation.messageIds);
+        const existingParticipantIds = JSON.parse(existingConversation.participantIds);
+        await client.runtime.databaseAdapter.updateConversation({
+            id: conversationId,
+            messageIds: JSON.stringify([...new Set([...existingMessageIds, ...messageIds])]),
+            participantIds: JSON.stringify([...new Set([...existingParticipantIds, ...participantIds])]),
+            lastMessageAt: new Date(Math.max(
+                ...thread.map(t => t.timestamp * 1000),
+                existingConversation.lastMessageAt.getTime()
+            )),
+            context: formattedConversation,
+            status: 'ACTIVE'
+        });
+    } else {
+        elizaLogger.debug("Creating new conversation", {
+            id: conversationId,
+            messageCount: messageIds.length,
+            participantCount: participantIds.length
+        });
+        await client.runtime.databaseAdapter.storeConversation({
+            id: conversationId,
+            rootTweetId: thread[0].id,
+            messageIds: JSON.stringify(messageIds),
+            participantIds: JSON.stringify(participantIds),
+            startedAt: new Date(thread[0].timestamp * 1000),
+            lastMessageAt: new Date(thread[thread.length - 1].timestamp * 1000),
+            context: formattedConversation,
+            agentId: client.runtime.agentId
+        });
+    }
+    elizaLogger.debug("Final thread details:", {
         totalTweets: thread.length,
         tweetIds: thread.map((t) => ({
+        tweetDetails: thread.map(t => ({
             id: t.id,
             text: t.text?.slice(0, 50),
         })),
+            author: t.username,
+            text: t.text?.slice(0, 50) + "..."
+        }))
     });
+
+    const conversationMessagess = await client.runtime.databaseAdapter.getConversationMessages(conversationId)
+    elizaLogger.debug ("conversation messages", conversationMessagess)
 
     return thread;
 }
@@ -461,3 +527,88 @@ function splitParagraph(paragraph: string, maxLength: number): string[] {
 
     return restoredChunks;
 }
+export async function analyzeConversation(
+    conversationId: UUID,
+    runtime: IAgentRuntime
+): Promise<void> {
+
+    const conversation = await runtime.databaseAdapter.getConversation(conversationId);
+
+
+    // Get all messages in order
+    const messages = await runtime.databaseAdapter.getConversationMessages(conversationId);
+    if (messages.length === 0) {
+        elizaLogger.error("No messages found in conversation for analysis", conversationId);
+        return;
+    }
+// Get the last message to use for state building
+    const lastMessage = messages[messages.length - 1];
+    // Build state with conversation context
+    const state = await runtime.composeState(lastMessage, {
+        conversationId: conversationId,
+        twitterUserName: runtime.getSetting("TWITTER_USERNAME")
+    });
+
+    //console.log("state:", state)
+
+    // Format conversation for per-user analysis
+    const analysisTemplate = `
+    #Conversation:
+    {{recentUserConversations}}
+
+    #Instructions:
+    Evaluate the messages the other users sent to you in this conversation.
+    Rate each users messages sent to you as a whole using these metrics: [-5] very bad, [0] neutral, [5] very good.
+    Evaluates these messages as the character {{agentName}} (@{{twitterUserName}}):with the context of the whole conversation.
+    If you aren't sure if the message was directed to you, or you're missing context to give a good answer, give the score [0] neutral.
+
+    Return ONLY a JSON object with usernames as keys and scores as values. Example format:
+    {
+        "@user1": 0.8,
+        "@user2": -0.3
+    }`;
+    const context = composeContext({
+        state,
+        template: analysisTemplate
+    });
+
+
+    const analysis = await generateText({
+        runtime,
+        context,
+        modelClass: ModelClass.MEDIUM,
+    });
+
+    // Strip markdown code blocks if present
+    const cleanAnalysis = analysis.replace(/^```(?:json)?\n|\n```$/g, '').trim();
+
+    elizaLogger.debug("Cleaned analysis:", cleanAnalysis);
+
+    try {
+        const sentimentScores = JSON.parse(cleanAnalysis);
+
+        // Update conversation with analysis
+        await runtime.databaseAdapter.updateConversation({
+            id: conversationId,
+            status: 'CLOSED'
+        });
+
+        // Log each update attempt
+        for (const [username, score] of Object.entries(sentimentScores)) {
+            elizaLogger.debug(`Updating rapport for ${username} with score ${score}`);
+            await runtime.databaseAdapter.setUserRapport(
+                username,
+                runtime.agentId,
+                score as number
+            );
+        }
+    } catch (error) {
+        elizaLogger.error("Error parsing sentiment analysis:", {
+            error: error.message,
+            stack: error.stack,
+            rawAnalysis: analysis,
+            cleanedAnalysis: cleanAnalysis
+        });
+    }
+}
+
