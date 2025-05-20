@@ -1,3 +1,8 @@
+## ⚠️ THIS REPOSITORY HAS MOVED ⚠️
+
+**This package has been relocated to [elizaos-plugins/plugin-twitter](https://github.com/elizaos-plugins/plugin-twitter).**  
+We have dropped the `client-` prefix and now use just `plugin-` for all types of packages. This serves as backwards compat repo for v0 Eliza installs only. Future dev is done on 0.x and 1.x branches on new repo.
+
 # Eliza Twitter/X Client
 
 This package provides Twitter/X integration for the Eliza AI agent.
